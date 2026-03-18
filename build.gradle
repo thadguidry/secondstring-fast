@@ -26,3 +26,42 @@ test {
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['--add-modules', 'jdk.incubator.vector']
 }
+
+// ── Benchmark tasks ─────────────────────────────────────────────────────────
+
+sourceSets {
+    jmh {
+        java.srcDirs = ['src/jmh/java']
+        compileClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
+tasks.register('compileBenchmark', JavaCompile) {
+    source = sourceSets.jmh.java
+    classpath = sourceSets.jmh.compileClasspath
+    destinationDirectory = layout.buildDirectory.dir('classes/java/jmh')
+    options.compilerArgs += ['--add-modules', 'jdk.incubator.vector']
+}
+compileBenchmark.dependsOn compileJava
+
+tasks.register('benchmark', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.LargeDatasetBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+}
+
+tasks.register('quickBenchmark', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.QuickBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+}
