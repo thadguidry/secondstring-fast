@@ -1,0 +1,29 @@
+# Gradle
+.gradle/
+build/
+
+# Java build outputs
+out/
+*.class
+
+# IDE/editor files
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution artifacts
+secondstring-fast-*.jar
+secondstring-fast-*.zip
+log4j-*.jar
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
