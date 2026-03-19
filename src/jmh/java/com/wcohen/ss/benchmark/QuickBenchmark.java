@@ -11,6 +11,7 @@ import com.wcohen.ss.fast.FastSoftTFIDFDictionary;
 import com.wcohen.ss.fast.FastBagOfTokens;
 import com.wcohen.ss.api.StringWrapper;
 import com.wcohen.ss.BasicStringWrapperIterator;
+import org.apache.commons.text.similarity.LevenshteinDistance;
 
 import java.io.*;
 import java.util.*;
@@ -19,11 +20,57 @@ public class QuickBenchmark {
 
     public static void main(String[] args) throws Exception {
         Map<String, List<String>> ds = loadAllDatasets();
+        Set<String> selectedPhases = parseSelectedPhases();
         System.out.println("Datasets loaded: " + ds.keySet());
-        benchmarkJaroWinkler(ds);
-        benchmarkLevenstein(ds);
-        benchmarkSoftTFIDF(ds);
-        benchmarkDictionaryLookup(ds);
+        runPhase(selectedPhases, "JaroWinkler", () -> benchmarkJaroWinkler(ds));
+        runPhase(selectedPhases, "Levenstein", () -> benchmarkLevenstein(ds));
+        runPhase(selectedPhases, "SoftTFIDF", () -> benchmarkSoftTFIDF(ds));
+        runPhase(selectedPhases, "Dictionary", () -> benchmarkDictionaryLookup(ds));
+    }
+
+    static Set<String> parseSelectedPhases() {
+        String phaseValue = System.getProperty("benchmark.phase");
+        if (phaseValue == null || phaseValue.trim().isEmpty()) {
+            return Set.of();
+        }
+
+        Set<String> selected = new LinkedHashSet<>();
+        String[] parts = phaseValue.split(",");
+        for (String part : parts) {
+            String normalized = normalizePhaseName(part);
+            if (normalized != null) {
+                selected.add(normalized);
+            }
+        }
+
+        if (selected.isEmpty()) {
+            throw new IllegalArgumentException(
+                "Invalid benchmark.phase='" + phaseValue + "'. Valid values: JaroWinkler, Levenstein, SoftTFIDF, Dictionary"
+            );
+        }
+        return selected;
+    }
+
+    static String normalizePhaseName(String rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+
+        String compact = rawValue.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return switch (compact) {
+            case "jarowinkler", "jaro" -> "JaroWinkler";
+            case "levenstein", "levenshtein", "lev" -> "Levenstein";
+            case "softtfidf", "softtf", "tfidf" -> "SoftTFIDF";
+            case "dictionary", "dict", "lookup" -> "Dictionary";
+            default -> null;
+        };
+    }
+
+    static void runPhase(Set<String> selectedPhases, String name, Runnable fn) {
+        if (!selectedPhases.isEmpty() && !selectedPhases.contains(name)) {
+            return;
+        }
+        fn.run();
     }
 
     static void benchmarkJaroWinkler(Map<String, List<String>> datasets) {
@@ -63,9 +110,11 @@ public class QuickBenchmark {
         List<String> strings = datasets.getOrDefault("restaurant", datasets.values().iterator().next());
         int n = Math.min(200, strings.size());
         List<String> subset = strings.subList(0, n);
+        List<String> normalizedSubset = caseFold(subset);
 
         Levenstein orig = new Levenstein();
         FastLevenstein fast = new FastLevenstein();
+        LevenshteinDistance commons = LevenshteinDistance.getDefaultInstance();
 
         long t1 = measure(() -> {
             double sum = 0;
@@ -87,9 +136,22 @@ public class QuickBenchmark {
             return sum;
         });
 
+        long t3 = measure(() -> {
+            double sum = 0;
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    sum += commons.apply(normalizedSubset.get(i), normalizedSubset.get(j));
+                }
+            }
+            return sum;
+        });
+
         System.out.println("Levenstein original ms: " + t1);
         System.out.println("Levenstein fast ms:     " + t2);
-        System.out.printf("Levenstein speedup: %.2fx%n", (double) t1 / Math.max(1, t2));
+        System.out.println("Levenstein commons ms:  " + t3);
+        System.out.printf("Levenstein fast/orig speedup: %.2fx%n", (double) t1 / Math.max(1, t2));
+        System.out.printf("Levenstein commons/orig speedup: %.2fx%n", (double) t1 / Math.max(1, t3));
+        System.out.printf("Levenstein commons/fast speedup: %.2fx%n", (double) t3 / Math.max(1, t2));
     }
 
     static void benchmarkSoftTFIDF(Map<String, List<String>> datasets) {
@@ -200,6 +262,14 @@ public class QuickBenchmark {
             out.put(f.getName().replace(".txt", ""), items);
         }
         return out;
+    }
+
+    static List<String> caseFold(List<String> strings) {
+        List<String> normalized = new ArrayList<>(strings.size());
+        for (String value : strings) {
+            normalized.add(value.toLowerCase(Locale.ROOT));
+        }
+        return normalized;
     }
 
     @FunctionalInterface

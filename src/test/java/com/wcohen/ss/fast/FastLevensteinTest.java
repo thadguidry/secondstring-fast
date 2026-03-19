@@ -1,7 +1,10 @@
 package com.wcohen.ss.fast;
 
 import com.wcohen.ss.Levenstein;
+import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.junit.jupiter.api.Test;
+
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -13,6 +16,7 @@ class FastLevensteinTest {
 
     private final Levenstein orig = new Levenstein();
     private final FastLevenstein fast = new FastLevenstein();
+    private final LevenshteinDistance commons = LevenshteinDistance.getDefaultInstance();
 
     // ---- editDistance API ----
 
@@ -105,6 +109,33 @@ class FastLevensteinTest {
             fast.score("restaurant", "restraunt"),
             0.0
         );
+    }
+
+    @Test
+    void normalizedCommonsDistanceMatchesOriginalNegativeScore() {
+        String[][] pairs = {
+            {"", ""},
+            {"Hello", "hello"},
+            {"WORLD", "world"},
+            {"kitten", "sitting"},
+            {"Sunday", "Saturday"},
+            {"California", "Californication"},
+            {"OpenRefine", "OpenRefinement"},
+            {"the quick brown fox", "the slow green fox"},
+        };
+
+        for (String[] p : pairs) {
+            int commonsDistance = commons.apply(
+                p[0].toLowerCase(Locale.ROOT),
+                p[1].toLowerCase(Locale.ROOT)
+            );
+            assertEquals(
+                -commonsDistance,
+                orig.score(p[0], p[1]),
+                0.0,
+                "Mismatch for normalized Commons pair (\"" + p[0] + "\", \"" + p[1] + "\")"
+            );
+        }
     }
 
     @Test

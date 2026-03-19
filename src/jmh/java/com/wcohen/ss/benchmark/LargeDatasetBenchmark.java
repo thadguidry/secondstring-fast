@@ -11,11 +11,15 @@ import com.wcohen.ss.fast.FastSoftTFIDF;
 import com.wcohen.ss.fast.FastSoftTFIDFDictionary;
 import com.wcohen.ss.api.StringWrapper;
 import com.wcohen.ss.BasicStringWrapperIterator;
+import org.apache.commons.text.similarity.LevenshteinDistance;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public class LargeDatasetBenchmark {
 
@@ -26,6 +30,7 @@ public class LargeDatasetBenchmark {
 
     public static void main(String[] args) throws Exception {
         Map<String, List<String>> ds = QuickBenchmark.loadAllDatasets();
+        Set<String> selectedPhases = parseSelectedPhases();
 
         List<String> targets = new ArrayList<>(Arrays.asList(
                 "acm_large",
@@ -47,14 +52,55 @@ public class LargeDatasetBenchmark {
             System.out.println("\n=== Dataset: " + name + " ===");
             printStats(strings);
 
-            runPhase("JaroWinkler", () -> benchJaroWinkler(strings, Math.min(140, strings.size())));
-            runPhase("Levenstein", () -> benchLevenstein(strings, Math.min(140, strings.size())));
-            runPhase("SoftTFIDF", () -> benchSoftTFIDF(strings, Math.min(90, strings.size())));
-            runPhase("Dictionary", () -> benchDictionary(strings, Math.min(1000, strings.size())));
+            runPhase(selectedPhases, "JaroWinkler", () -> benchJaroWinkler(strings, Math.min(140, strings.size())));
+            runPhase(selectedPhases, "Levenstein", () -> benchLevenstein(strings, Math.min(140, strings.size())));
+            runPhase(selectedPhases, "SoftTFIDF", () -> benchSoftTFIDF(strings, Math.min(90, strings.size())));
+            runPhase(selectedPhases, "Dictionary", () -> benchDictionary(strings, Math.min(1000, strings.size())));
         }
     }
 
-    private static void runPhase(String name, PhaseFn fn) {
+    private static Set<String> parseSelectedPhases() {
+        String phaseValue = System.getProperty("benchmark.phase");
+        if (phaseValue == null || phaseValue.trim().isEmpty()) {
+            return Set.of();
+        }
+
+        Set<String> selected = new LinkedHashSet<>();
+        String[] parts = phaseValue.split(",");
+        for (String part : parts) {
+            String normalized = normalizePhaseName(part);
+            if (normalized != null) {
+                selected.add(normalized);
+            }
+        }
+
+        if (selected.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Invalid benchmark.phase='" + phaseValue + "'. Valid values: JaroWinkler, Levenstein, SoftTFIDF, Dictionary");
+        }
+        return selected;
+    }
+
+    private static String normalizePhaseName(String rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+
+        String compact = rawValue.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return switch (compact) {
+            case "jarowinkler", "jaro" -> "JaroWinkler";
+            case "levenstein", "levenshtein", "lev" -> "Levenstein";
+            case "softtfidf", "softtf", "tfidf" -> "SoftTFIDF";
+            case "dictionary", "dict", "lookup" -> "Dictionary";
+            default -> null;
+        };
+    }
+
+    private static void runPhase(Set<String> selectedPhases, String name, PhaseFn fn) {
+        if (!selectedPhases.isEmpty() && !selectedPhases.contains(name)) {
+            return;
+        }
+
         try {
             fn.run();
         } catch (Throwable t) {
@@ -76,9 +122,11 @@ public class LargeDatasetBenchmark {
 
     private static void benchLevenstein(List<String> strings, int n) {
         List<String> subset = strings.subList(0, n);
+        List<String> normalizedSubset = QuickBenchmark.caseFold(subset);
 
         Levenstein orig = new Levenstein();
         FastLevenstein fast = new FastLevenstein();
+        LevenshteinDistance commons = LevenshteinDistance.getDefaultInstance();
 
         long t1 = QuickBenchmark.measure(() -> {
             double sum = 0;
@@ -100,8 +148,25 @@ public class LargeDatasetBenchmark {
             return sum;
         });
 
-        System.out.printf("Levenstein n=%d orig=%dms fast=%dms speedup=%.2fx%n", n, t1, t2,
-                (double) t1 / Math.max(1, t2));
+        long t3 = QuickBenchmark.measure(() -> {
+            double sum = 0;
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    sum += commons.apply(normalizedSubset.get(i), normalizedSubset.get(j));
+                }
+            }
+            return sum;
+        });
+
+        System.out.printf(
+                "Levenstein n=%d orig=%dms fast=%dms commons=%dms fast/orig=%.2fx commons/orig=%.2fx commons/fast=%.2fx%n",
+                n,
+                t1,
+                t2,
+                t3,
+                (double) t1 / Math.max(1, t2),
+                (double) t1 / Math.max(1, t3),
+                (double) t3 / Math.max(1, t2));
     }
 
     private static void benchJaroWinkler(List<String> strings, int n) {

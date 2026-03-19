@@ -2,6 +2,8 @@ plugins {
     id 'java'
 }
 
+import java.io.FileOutputStream
+
 group = 'com.wcohen'
 version = '2.0.0'
 
@@ -30,8 +32,12 @@ tasks.withType(JavaCompile).configureEach {
 // ── Benchmark tasks ─────────────────────────────────────────────────────────
 
 sourceSets {
+    test {
+        java.srcDirs += ['apache-similarity/src/main/java']
+    }
+
     jmh {
-        java.srcDirs = ['src/jmh/java']
+        java.srcDirs = ['src/jmh/java', 'apache-similarity/src/main/java']
         compileClasspath += sourceSets.main.output + configurations.runtimeClasspath
     }
 }
@@ -53,6 +59,36 @@ tasks.register('benchmark', JavaExec) {
         configurations.runtimeClasspath
     )
     jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
+}
+
+tasks.register('benchmarkDataset', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.LargeDatasetBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def dataset = providers.gradleProperty('dataset')
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (!dataset.present || dataset.get().trim().isEmpty()) {
+            throw new GradleException("Missing -Pdataset=<name>. Example: ./gradlew benchmarkDataset -Pdataset=acm_large")
+        }
+        args(dataset.get().trim())
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
 }
 
 tasks.register('quickBenchmark', JavaExec) {
@@ -64,4 +100,118 @@ tasks.register('quickBenchmark', JavaExec) {
         configurations.runtimeClasspath
     )
     jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
 }
+
+def benchmarkOutputDir = layout.projectDirectory.dir('out/benchmarks').asFile
+
+def sanitizeBenchmarkToken = { String value ->
+    value.replaceAll('[^A-Za-z0-9._-]+', '_')
+}
+
+def attachBenchmarkCapture = { JavaExec task, Closure<String> outputNameSupplier ->
+    task.doFirst {
+        benchmarkOutputDir.mkdirs()
+        File outputFile = new File(benchmarkOutputDir, outputNameSupplier.call())
+        FileOutputStream stream = new FileOutputStream(outputFile)
+        task.extensions.extraProperties.set('captureStream', stream)
+        standardOutput = stream
+        errorOutput = stream
+        logger.lifecycle("Writing benchmark output to ${outputFile}")
+    }
+    task.doLast {
+        def stream = task.extensions.extraProperties.get('captureStream')
+        if (stream != null) {
+            stream.close()
+        }
+    }
+}
+
+tasks.register('benchmarkCapture', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.LargeDatasetBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
+}
+attachBenchmarkCapture(tasks.named('benchmarkCapture').get(), {
+    def phase = providers.gradleProperty('phase')
+    phase.present && !phase.get().trim().isEmpty()
+        ? "benchmark_${sanitizeBenchmarkToken(phase.get().trim())}.out"
+        : 'benchmark_full.out'
+})
+
+tasks.register('benchmarkDatasetCapture', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.LargeDatasetBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def dataset = providers.gradleProperty('dataset')
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (!dataset.present || dataset.get().trim().isEmpty()) {
+            throw new GradleException("Missing -Pdataset=<name>. Example: ./gradlew benchmarkDatasetCapture -Pdataset=acm_large")
+        }
+        args(dataset.get().trim())
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
+}
+attachBenchmarkCapture(tasks.named('benchmarkDatasetCapture').get(), {
+    def dataset = providers.gradleProperty('dataset')
+    def phase = providers.gradleProperty('phase')
+    if (!dataset.present || dataset.get().trim().isEmpty()) {
+        throw new GradleException("Missing -Pdataset=<name>. Example: ./gradlew benchmarkDatasetCapture -Pdataset=acm_large")
+    }
+    String datasetPart = sanitizeBenchmarkToken(dataset.get().trim())
+    if (phase.present && !phase.get().trim().isEmpty()) {
+        return "benchmark_dataset_${datasetPart}_${sanitizeBenchmarkToken(phase.get().trim())}.out"
+    }
+    return "benchmark_dataset_${datasetPart}.out"
+})
+
+tasks.register('quickBenchmarkCapture', JavaExec) {
+    dependsOn compileBenchmark
+    mainClass = 'com.wcohen.ss.benchmark.QuickBenchmark'
+    classpath = files(
+        sourceSets.main.output,
+        layout.buildDirectory.dir('classes/java/jmh'),
+        configurations.runtimeClasspath
+    )
+    jvmArgs '--add-modules', 'jdk.incubator.vector'
+
+    def phase = providers.gradleProperty('phase')
+    doFirst {
+        if (phase.present && !phase.get().trim().isEmpty()) {
+            systemProperty 'benchmark.phase', phase.get().trim()
+        }
+    }
+}
+attachBenchmarkCapture(tasks.named('quickBenchmarkCapture').get(), {
+    def phase = providers.gradleProperty('phase')
+    phase.present && !phase.get().trim().isEmpty()
+        ? "quick_benchmark_${sanitizeBenchmarkToken(phase.get().trim())}.out"
+        : 'quick_benchmark.out'
+})
